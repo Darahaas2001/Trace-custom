@@ -361,41 +361,6 @@ def to_list(x: Any):
     """ This converts x to a list.  """
     return list(x)
 
-@bundle()
-def make_list(*args):
-    """ This creates a list from the arguments. """
-    return list(args)
-
-@bundle()
-def to_dict(x: Any):
-    """ This converts x to a dictionary. """
-    return dict(x)
-
-@bundle()
-def make_dict(**kwargs):
-    """ This creates a dictionary from the keyword arguments. """
-    return kwargs
-
-@bundle()
-def to_set(x: Any):
-    """ This converts x to a set. """
-    return set(x)
-
-@bundle()
-def make_set(*args):
-    """ This creates a set from the arguments. """
-    return set(args)
-
-@bundle()
-def to_tuple(x: Any):
-    """ This converts x to a tuple. """
-    return tuple(x)
-
-@bundle()
-def make_tuple(*args):
-    """ This creates a tuple from the arguments. """
-    return tuple(args)
-
 # dict operators
 
 @bundle()
@@ -554,14 +519,3 @@ def set_update(x: Any, y: Any):
     x = copy.copy(x)
     x.update(y)
     return x
-
-@bundle()
-def call_llm(system_prompt, *user_prompts, **kwargs):
-    """ Query the language model of system_prompt with user_prompts."""
-    messages = [{"role": "system", "content": system_prompt}]
-    for user_prompt in user_prompts:
-        messages.append({"role": "user", "content": user_prompt})
-    from opto.utils.llm import AutoGenLLM
-    llm = AutoGenLLM()
-    response = llm(messages=messages, **kwargs)
-    return response.choices[0].message.content

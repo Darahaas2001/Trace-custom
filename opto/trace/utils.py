@@ -2,6 +2,8 @@ from graphviz import Digraph
 import builtins
 import re
 import json
+from json_repair import repair_json
+
 
 # Get a list of all names in the builtins module
 builtins_list = dir(builtins)
@@ -12,7 +14,6 @@ global_functions_list = [name for name in builtins_list if callable(getattr(buil
 def sum_feedback(nodes):
     """ Aggregate the feedback of a list of nodes. """
     return sum([sum(gg) for p in nodes for gg in p.feedback.values()])
-
 
 def contain(container_of_nodes, node):
     # check for identity instead of value
@@ -48,6 +49,7 @@ def parse_eqs_to_dict(text):
     return result_dict
 
 
+
 def for_all_methods(decorator):
     """Applying a decorator to all methods of a class."""
 
@@ -60,18 +62,53 @@ def for_all_methods(decorator):
     return decorate
 
 
+def preprocess_and_parse_json(raw_json):
+    """
+    Fixes malformed JSON and parses it into a Python dictionary.
+    Ensures all keys and values are properly quoted and unescaped.
+    """
+    try:
+        # Step 1: Remove Markdown backticks
+        raw_json = raw_json.replace("```json", "").replace("```", "")
+        
+        # Step 2: Remove inline comments
+        raw_json = re.sub(r"#.*?$", "", raw_json, flags=re.MULTILINE)
+        
+        # Step 3: Replace triple single quotes with a placeholder
+        raw_json = raw_json.replace("'''", "\"")
+        
+        raw_json = repair_json(raw_json)
+
+        return raw_json
+        
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}")
+        print(f"Preprocessed JSON: {raw_json}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return None
+
+
+
+
+
+
 def render_opt_step(step_idx, optimizer, no_trace_graph=False, no_improvement=False):
     from IPython.display import display, HTML
 
     idx = step_idx
-    llm_response = json.loads(optimizer.log[idx]['response'])
+    llm_response = preprocess_and_parse_json(optimizer.log[idx]['response'])
+    llm_response = json.loads(llm_response)
     r1 = llm_response['reasoning']
-
     if 'suggestion' in llm_response and llm_response['suggestion'] is not None:
         a1 = ""
         for var_name, var_body in llm_response['suggestion'].items():
             a1 += var_name + ':\n\n'
-            a1 += var_body + '\n\n'
+            if isinstance(var_body, list):
+                a1 += "\n".join(map(str, var_body)) + '\n\n'
+            else:
+                a1 += str(var_body) + '\n\n'
 
     elif 'answer' in llm_response and llm_response['answer'] is not None:
         a1 = llm_response['answer']
@@ -82,7 +119,7 @@ def render_opt_step(step_idx, optimizer, no_trace_graph=False, no_improvement=Fa
     f1 = pi.feedback
 
     masked = ['#Feedback', '#Others', '#Instruction']
-    pi = optimizer.problem_instance(optimizer.summary_log[idx]['summary'], mask=masked)
+    pi = optimizer.probelm_instance(optimizer.summary_log[idx]['summary'], mask=masked)
 
     # a hack to remove "#Feedback:" because it has a colon
     pi = str(pi)
@@ -147,124 +184,3 @@ def render_opt_step(step_idx, optimizer, no_trace_graph=False, no_improvement=Fa
     html_template += "</div>"
 
     display(HTML(html_template))
-
-
-def escape_json_nested_quotes(json_str):
-    """
-    Escapes double quotation marks inside JSON string values for a specific format:
-    {"name": "string value", "value": "string value"}
-    Does not escape quotes around keys or structural quotes.
-
-    Warning: here are what this function does not do:
-    1. Cannot handle "\\\n" or "\\\t" type of strings
-    2. Do not check if "\n" or "\t" or other control characters are properly escaped
-       Please use json_str.replace("\n", "\\n") to escape control characters outside of this function
-
-    Example usage can be found in optimizers/textgrad.py
-
-    Args:
-        json_str (str): A string representation of JSON with exactly two keys: name and value
-
-    Returns:
-        str: JSON string with properly escaped quotes in values
-    """
-    result = []
-    i = 0
-    in_value = False
-    while i < len(json_str):
-        char = json_str[i]
-
-        if char == '"':
-            # Check if this quote is around "name" or "value"
-            next_four = json_str[i + 1:i + 5]
-            next_five = json_str[i + 1:i + 6]
-            is_key = next_four == 'name' or next_five == 'value'
-
-            # Check if this is a structural quote (after : or before })
-            prev_char = json_str[i - 1] if i > 0 else ''
-            next_char = json_str[i + 1] if i < len(json_str) - 1 else ''
-            is_value_boundary = prev_char == ':' or (
-                    prev_char == ' ' and json_str[i - 2] == ':') or next_char == '}' or next_char == ','
-
-            if is_key or is_value_boundary:
-                result.append(char)
-                if prev_char == ':' or (prev_char == ' ' and json_str[i - 2] == ':'):
-                    in_value = True
-                if next_char == '}' or next_char == ',':
-                    in_value = False
-            else:
-                # if we double-escpaed like \\", we remove one
-                if in_value and prev_char == "\\" and json_str[i - 2] == "\\":
-                    result.pop(-1)
-                    result.append(char)
-                # If we're in a value and this is not a boundary quote, escape it
-                elif in_value and prev_char != "\\":
-                    result.append(r'\"')
-                else:
-                    result.append(char)
-        else:
-            # we need to remove markdown latex syntax
-            # it's a simple procedure that removes all "\\alpha" or "\\(" type strings
-            # JSON can't accept any \ with invalid characters, in here we took a short cut and only keep \ for
-
-            # we didn't add \u to this list
-            if json_str[i - 1] == "\\" and char not in ["\\", "\/", 'n', 'b', 'f', 'r', 't']:
-                result.pop(-1)
-
-            result.append(char)
-
-        # print(in_value, ''.join(result))
-        i += 1
-
-    return ''.join(result)
-
-
-def remove_non_ascii(json_txt):
-    """
-    Example usage can be found in optimizers/textgrad.py
-    """
-    cleaned = ""
-    for c in escape_json_nested_quotes(json_txt):
-        if c not in ['\n', '\t', '\b', '\r', '\f'] and not c.isprintable():
-            continue
-        cleaned += c
-    return cleaned
-
-
-def test_json_quote_escaper():
-    test_cases = [
-        (
-            '{"name": "Multiple "quotes" in "one" string", "value": "Multiple "quotes" in "the second" string"}',
-            r'{"name": "Multiple \"quotes\" in \"one\" string", "value": "Multiple \"quotes\" in \"the second\" string"}'
-        ),
-        (
-            '{"name": "Simple "quote"", "value": "Another "quote""}',
-            r'{"name": "Simple \"quote\"", "value": "Another \"quote\""}'
-        ),
-        (
-            '{"name": "No quotes here", "value": "But "quotes" here"}',
-            r'{"name": "No quotes here", "value": "But \"quotes\" here"}'
-        ),
-        (
-            '{"name": "Quote at "end"", "value": "Another at "end""}',
-            r'{"name": "Quote at \"end\"", "value": "Another at \"end\""}'
-        ),
-        (
-            r'{"name": "Quote at "end"", "value": "Partial at \"end""}',
-            r'{"name": "Quote at \"end\"", "value": "Partial at \"end\""}'
-        ),
-        (
-            r'{"name": "Quote at \\"end\\"", "value": "Partial at \"end""}',
-            r'{"name": "Quote at \"end\"", "value": "Partial at \"end\""}'
-        ),
-        (
-            r'{"name": "Quote at \\"end\\"", "value": "\( \alpha_t \) \\n"}',
-            r'{"name": "Quote at \"end\"", "value": "( alpha_t ) \\n"}'
-        )
-    ]
-
-    for i, (input_str, expected) in enumerate(test_cases, 1):
-        result = escape_json_nested_quotes(input_str)
-        assert result == expected, f'\nTest case {i} failed:\nInput:    {input_str}\nExpected: {expected}\nGot:      {result}'
-
-    print("All tests passed!")

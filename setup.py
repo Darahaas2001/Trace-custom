@@ -13,6 +13,8 @@ install_requires = [
     "graphviz>=0.20.1",
     "scikit-learn",
     "xgboost",
+    "autogen",
+    "json-repair",
 ]
 
 setuptools.setup(
